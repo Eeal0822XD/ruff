@@ -121,6 +121,10 @@ impl AstIdsBuilder {
         use_id
     }
 
+    pub(super) fn try_use_id(&self, key: impl Into<ExpressionNodeKey>) -> Option<ScopedUseId> {
+        self.uses_map.get(&key.into()).copied()
+    }
+
     pub(super) fn finish(mut self) -> AstIds {
         self.uses_map.shrink_to_fit();
 

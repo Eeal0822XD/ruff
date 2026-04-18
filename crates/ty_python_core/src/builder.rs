@@ -764,9 +764,34 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
         &mut self.use_def_maps[scope_id].reachability_constraints
     }
 
-    fn current_ast_ids(&mut self) -> &mut AstIdsBuilder {
+    fn current_ast_ids(&self) -> &AstIdsBuilder {
+        let scope_id = self.current_scope();
+        &self.ast_ids[scope_id]
+    }
+
+    fn current_ast_ids_mut(&mut self) -> &mut AstIdsBuilder {
         let scope_id = self.current_scope();
         &mut self.ast_ids[scope_id]
+    }
+
+    fn is_unannotated_collection_literal(&self, func: &ast::Expr) -> bool {
+        let Some(attribute) = func.as_attribute_expr() else {
+            return false;
+        };
+        let Some(use_id) = self.current_ast_ids().try_use_id(&attribute.value) else {
+            return false;
+        };
+
+        let use_def = self.current_use_def_map();
+        use_def.bindings_at_use(use_id).all(|binding| {
+            let Some(definition) = use_def.definition(binding.binding()).definition() else {
+                return false;
+            };
+
+            definition
+                .kind(self.db)
+                .is_unannotated_collection_literal(self.module)
+        })
     }
 
     /// Try to register a narrowing alias for a simple name assignment.
@@ -979,7 +1004,7 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
         if let ScopedPlaceId::Symbol(symbol_id) = place_id {
             self.mark_symbol_used(symbol_id);
         }
-        let use_id = self.current_ast_ids().record_use(expr);
+        let use_id = self.current_ast_ids_mut().record_use(expr);
         self.current_use_def_map_mut().record_use(place_id, use_id);
         use_id
     }
@@ -1766,11 +1791,9 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
             ast::Stmt::ClassDef(class) => {
                 Some(Statement::Definition(self.expect_single_definition(class)))
             }
-            ast::Stmt::Expr(expr) => self
-                .expressions_by_node
-                .get(&(&expr.value).into())
-                .copied()
-                .map(Statement::Expression),
+            ast::Stmt::Expr(ast::StmtExpr { value, .. }) => {
+                Some(Statement::Expression(self.add_standalone_expression(value)))
+            }
             ast::Stmt::Assign(assign) => {
                 if let [ast::Expr::Name(name)] = &assign.targets[..] {
                     Some(Statement::Definition(self.expect_single_definition(name)))
@@ -2275,7 +2298,7 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
                 // used to collect all the overloaded definitions of a function. This needs to be
                 // done on the `Identifier` node as opposed to `ExprName` because that's what the
                 // AST uses.
-                let use_id = self.current_ast_ids().record_use(name);
+                let use_id = self.current_ast_ids_mut().record_use(name);
                 self.current_use_def_map_mut()
                     .record_use(symbol.into(), use_id);
 
@@ -3433,7 +3456,15 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
                 };
 
                 if let Some((func, expr, is_await)) = call_info {
-                    if !self.source_type.is_stub() {
+                    // Avoid creating reachability nodes for calls on unannotated collection
+                    // literals. Without this short-circuit, performing reachability analysis
+                    // can lead to quadratic blowup of cycle dependencies during full-scope
+                    // collection inference, as Salsa flattens the dependencies of all cycle
+                    // participants, and the reachability analysis of a given use of the
+                    // collection may create dependencies on all previous uses, leading to
+                    // significant performance regressions.
+                    if !self.source_type.is_stub() && !self.is_unannotated_collection_literal(func)
+                    {
                         let callable = self.add_standalone_expression(func);
                         let call_expr = self.add_standalone_expression(expr);
 
