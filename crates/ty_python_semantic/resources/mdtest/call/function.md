@@ -1709,7 +1709,9 @@ def _(args_tuple: tuple[int, int], args_union: tuple[int] | tuple[int, int], kwa
     f(*args_union, **kwargs)  # fine
 ```
 
-The same contextual inference should apply to overloaded calls for each matching overload:
+Dictionary-backed keyword splats can still use the matched parameter type as context when inferring
+fresh dictionary literal values. The same contextual inference applies across overloads by combining
+the matched keyword parameter types:
 
 ```py
 from collections.abc import Mapping
@@ -1721,30 +1723,16 @@ class Header(str, Enum):
 
 def with_headers(*, extra_headers: Mapping[str, str] | None = None) -> None: ...
 def valid_headers(request_id: str) -> None:
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "extra_headers": {Header.REQUEST_ID: request_id},
     }
     with_headers(**kwargs)
 
 def invalid_headers() -> None:
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "extra_headers": {Header.REQUEST_ID: 1},
     }
     with_headers(**kwargs)  # error: [invalid-argument-type]
-
-def expects_ints(*, x: list[int]) -> None: ...
-def branching_subscript(flag: bool) -> None:
-    kwargs = {}
-    if flag:
-        kwargs["x"] = []
-    else:
-        kwargs["x"] = ["s"]
-    expects_ints(**kwargs)  # error: [invalid-argument-type]
-
-def destructuring_subscript() -> None:
-    kwargs = {}
-    kwargs["x"], _ = [], 1
-    expects_ints(**kwargs)
 
 class InputMessage(TypedDict):
     role: Literal["user"]
@@ -1756,23 +1744,8 @@ def create(*, input: list[InputMessage]) -> int: ...
 def create(*, input: str) -> str: ...
 def create(**kwargs: Any) -> object: ...
 def ok(content: str) -> None:
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "input": [{"role": "user", "content": content}],
     }
     reveal_type(create(**kwargs))  # revealed: int
-
-def ok_subscript(content: str) -> None:
-    kwargs = {}
-    kwargs["input"] = [{"role": "user", "content": content}]
-    reveal_type(create(**kwargs))  # revealed: int
-
-def ok_annotated_subscript(content: str) -> None:
-    kwargs = {}
-    kwargs["input"]: object = [{"role": "user", "content": content}]
-    reveal_type(create(**kwargs))  # revealed: int
-
-def bad_subscript() -> None:
-    kwargs = {}
-    kwargs["input"] = [{"role": "user", "content": 1}]
-    create(**kwargs)  # error: [no-matching-overload]
 ```

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::fmt::Display;
 
 use itertools::{Either, Itertools};
-use ruff_python_ast::{self as ast, name::Name};
+use ruff_python_ast as ast;
 use rustc_hash::FxHashMap;
 
 use crate::Db;
@@ -61,13 +61,6 @@ struct CallArgument<'a, 'db> {
 pub(crate) struct CallArgumentTypes<'db> {
     fallback_type: Option<Type<'db>>,
     types: FxHashMap<Type<'db>, Type<'db>>,
-    keyword_context_fields: Vec<KeywordContextFields<'db>>,
-}
-
-#[derive(Clone, Debug)]
-struct KeywordContextFields<'db> {
-    context: Box<[(Name, Type<'db>)]>,
-    fields: Box<[(Name, Type<'db>)]>,
 }
 
 impl<'db> CallArgumentTypes<'db> {
@@ -75,7 +68,6 @@ impl<'db> CallArgumentTypes<'db> {
         Self {
             fallback_type: fallback_ty,
             types: FxHashMap::default(),
-            keyword_context_fields: Vec::new(),
         }
     }
 
@@ -111,41 +103,6 @@ impl<'db> CallArgumentTypes<'db> {
             Some(tcx) => {
                 self.types.insert(tcx, ty);
             }
-        }
-    }
-
-    pub(crate) fn get_field_for_keyword_context(
-        &self,
-        context: &[(Name, Type<'db>)],
-        field: &Name,
-    ) -> Option<Type<'db>> {
-        self.keyword_context_fields
-            .iter()
-            .find(|existing| existing.context.as_ref() == context)
-            .and_then(|existing| {
-                existing
-                    .fields
-                    .iter()
-                    .find_map(|(name, ty)| (name == field).then_some(*ty))
-            })
-    }
-
-    pub(crate) fn insert_fields_for_keyword_context(
-        &mut self,
-        context: &[(Name, Type<'db>)],
-        fields: Box<[(Name, Type<'db>)]>,
-    ) {
-        if let Some(existing) = self
-            .keyword_context_fields
-            .iter_mut()
-            .find(|existing| existing.context.as_ref() == context)
-        {
-            existing.fields = fields;
-        } else {
-            self.keyword_context_fields.push(KeywordContextFields {
-                context: context.to_vec().into_boxed_slice(),
-                fields,
-            });
         }
     }
 
@@ -248,6 +205,10 @@ impl<'a, 'db> CallArguments<'a, 'db> {
 
     pub(crate) fn argument_types(&self, index: usize) -> Option<&CallArgumentTypes<'db>> {
         self.items.get(index).map(|item| &item.types)
+    }
+
+    pub(crate) fn iter_types(&self) -> impl Iterator<Item = &CallArgumentTypes<'db>> + '_ {
+        self.items.iter().map(|item| &item.types)
     }
 
     /// Prepend an optional extra synthetic argument (for a `self` or `cls` parameter) to the front
